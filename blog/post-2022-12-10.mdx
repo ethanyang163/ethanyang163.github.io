@@ -1,0 +1,419 @@
+---
+date: "2022-12-10"
+slug: "post-2022-12-10"
+title: "如何实现一个webpack loader"
+---
+
+![mp3](https://redd.one/static/e9c12b1d95e9e01c05f752667efce5b3/426b8/thumbnail.jpg)
+
+## 介绍
+
+> 本文基于最新的 <strong>webpack v5</strong> 实现
+
+[webpack](https://webpack.js.org/) 正在为越来越多的现代前端工具（Create React App, NextJS, Gatsby）提供基础支撑。无论你使用哪一种工具，理解 如何自定义 webpack 配置都将使你受益。尽管 webpack 配置有时候并不是那么容易。
+
+今天我要讨论的是：如何实现一个自定义的 webpack loader。这个主题没有太多的文档可供参考。本文也是基于常用的 loaders 进行逆向工程的结果。
+
+## loader 基础
+
+[webpack loader](https://webpack.js.org/concepts/loaders/) 是转换导入模块源代码的函数。
+例如：
+
+```js
+const styles = cssLoader(require("./styles.css"));
+```
+
+webpack 能够将 TypeScript 编译为 JavaScript、转换 SASS 为 CSS、将 JSX 转化为`React.createElement`调用。其实这都是作为 webpack 核心的 loader 的作用。另一方面，webpack 创建了一个源码转化链来确保特定的 loader 在适当的时机被执行。
+
+loader 在 webpack 中的配置如下：
+
+```js
+// webpack.config.js
+module.exports = {
+  module: {
+    rules: [
+      {
+        // Capture all "*.js" imports,
+        test: /\.js$/,
+        // ...and transform them via "babel-loader".
+        use: ['babel-loader'],
+      },
+      {
+        // Capture all the "*.css" imports,
+        test: /\.css$/
+        // ...and transform them via "css-loader".
+        use: ['css-loader']
+      }
+    ],
+  },
+}
+```
+
+在上面的配置中，所有导入的`*.js`文件被交给`babel-loader`处理，所有的`*.css`文件被交给`css-loader`处理。对于同一种类型的文件，你可以提供多个 loader 来处理，loader 的应用顺序是从右至左。
+
+```js
+{
+  test: /\.ext$/;
+  use: ["third-loader", "second-loader", "first-loader"];
+}
+```
+
+当你把 loader 看成函数，源代码作为参数时，从右至左更加符合直觉。
+
+```js
+third(second(first(source)));
+```
+
+## loader 的一些限制
+
+loader 用于转换代码。与 plugin 不同的是，loader 不会影响编译流程，只是在编译的过程中转换导入的模块代码。
+
+一般来说，除了转换代码以外的事情都可以通过 [plugin](https://webpack.js.org/concepts/#plugins) 来完成。plugin 不应该对源代码做任改变，这也是 plugin 区分于 loader 最主要的特征。
+
+loader 有以下一些使用场景：
+
+- 支持特定格式的文件导入（例如：`*.graphql`或者`*.prisma`）
+- 为转换后的文件添加元数据（例如在`*.mdx`文件中插入前言）
+- 修改导入的文件（例如 CSS 样式自动添加前缀）
+
+## 实现一个自定义 loader
+
+在本文中我们准备实现一个 MP3 loader，这个 loader 可以转换导入的`*.mp3`文件为[React](https://reactjs.org/)播放组件。
+
+```js
+import AudioPlayer from './audio.mp3'
+
+function MyComponent {
+  return (
+    <AudioPlayer />
+  )
+}
+```
+
+## 函数声明
+
+loader 接收源代码作为输入，转化后的源代码作为输出。我们创建`mp3-loader.js`文件并声明一个函数：
+
+```js
+// src/mp3-loader.js
+module.exports = function (source) {
+  return source;
+};
+```
+
+目前为止， 你的 loader 会原样输出导入的 MP3 文件。
+
+我们使用`<audio>`标签来播放导入的音频文件。我们需要知道 MP3 文件在最终生成目录中的路径。将路径提供给`<audio>`标签的`src`属性使用。
+
+在 loader 的上下文环境中，可以通过`this.resourcePath`属性来获得导入文件的绝对路径。
+
+例如，对于下面的导入：
+
+```js
+import AudioPlayer from "./audio.mp3";
+```
+
+`this.resourcePath`会包含`./audio.mp3`文件的绝对路径。知道了这些，我们来生成一个同名的 MP3 文件。
+
+```js
+// src/mp3-loader.js
+const path = require("path");
+module.exports = function (source) {
+  // webpack exposes an absolute path to the imported module
+  // under the "this.resourcePath" property. Get the file name
+  // of the imported module. For example:
+  // "/User/admin/audio.mp3" (this.resourcePath) -> "audio.mp3".
+  const filename = path.basename(this.resourcePath);
+  // Next, create an asset info object.
+  // webpack uses this object when outputting the build's stats,
+  // so you could see info about the emitted asset.
+  const assetInfo = { sourceFilename: filename };
+  // Finally, emit the imported audio file's "source"
+  // in the webpack's build directory using a built-in
+  // "emitFile" method.
+  this.emitFile(filename, source, null, assetInfo);
+  // For now, return the mp3 binary as-is.
+  return source;
+};
+```
+
+> 你需要保持住 webpack 的上下文环境来获得`this.resourcePath`和`this.emitFile`。确保你的 laoder 不是一个箭头函数，使用箭头函数会让你无法获得 webpack 暴露给 loader 的属性和方法。
+
+现在音频文件会伴随着 JavaScript 包一起输出。我们继续下一个步骤：在 loader 中返回一个 React 组件。
+
+```js
+// src/mp3-loader.js
+const path = require("path");
+module.exports = function (source) {
+  const filename = path.basename(this.resourcePath);
+  const assetInfo = { sourceFilename: filename };
+  this.emitFile(filename, source, null, assetInfo);
+  return `
+import React from 'react'
+export default function Player(props) {
+  return <audio controls src="${filename}" />
+}
+  `;
+};
+// Mark the loader as raw so that the emitted audio binary
+// does not get processed in any way.
+module.exports.raw = true;
+```
+
+> 转换后的代码需要的依赖需要内联在生成的字符串中。loader 导入的依赖无法被编译后的代码访问到。
+
+loader 函数的输入输出必须是字符串。这就是为啥在字符串中声明了一个 React 组件，包含了 React 的导入语句。现在当我们导入一个 MP3 文件，导入的不再是 MP3 文件本身，而是一个 React 组件。
+
+太棒了！你现在实现了一个将 MP3 文件转化为音频播放组件的 webpack loader。现在我们将它添加到 webpack 配置中以使其能够应用到所有的`*.mp3`文件。
+
+## 配置自定义 loader
+
+配置 loader 有两种方式：让 webpack 从本地文件加载或者将 loader 发布成一个常规的依赖。除非你的 loader 足够通用，或者它需要被多个项目使用，否则我强烈建议你从本地文件加载来使用 loader。
+
+### 从本地文件加载 loader
+
+在 webpack 配置的`resolveLoader`属性中给 loader 一个别名。
+
+```js
+// webpack.config.js
+const path = require("path");
+module.exports = {
+  module: {
+    rules: [
+      {
+        test: /\.mp3$/,
+        // Reference the loader by the same name
+        // that you aliased in "resolveLoader.alias" below.
+        use: ["babel-loader", "mp3-loader"],
+      },
+    ],
+  },
+  resolveLoader: {
+    alias: {
+      "mp3-loader": path.resolve(__dirname, "src/mp3-loader.js"),
+    },
+  },
+};
+```
+
+> 因为我们从 mp3-loader 中返回了 JSX，我们需要告诉 webpack 将 JSX 转化为常规的 JavaScript。这就是我们为什么需要在`mp3-loader`之后引入`babel-loader`。（记住 loader 是从右往左执行）。
+
+### 安装依赖加载 loader
+
+当你发布了一个 loader 到 NPM，你可以像使用其他的 Node.js 依赖一样来使用它。
+
+> loader 的默认命名规则是`[name]-loader`。当你需要发布一个 loader 时，记得这一点。
+
+当你发布 `mp3-loader`到 NPM 之后，你就可以在项目中使用它了。
+
+```js
+npm install mp3-loader
+```
+
+```js
+// webpack.config.js
+module.exports = {
+  module: {
+    rules: [
+      {
+        test: /\.mp3$/,
+        use: ["babel-loader", "mp3-loader"],
+      },
+    ],
+  },
+};
+```
+
+> 你不需要手动导入你的 loader，webpack 能够自动在`node_modules`中找到它。
+
+## 使用你的 loader
+
+为了看到`mp3-loader`的实际效果，运行`webpack`CLI 命令来执行`webpack.config.js`中的配置。
+
+```
+$ npx webpack
+asset audio.mp3 2.38 MiB [compared for emit] [from: src/audio.mp3] (auxiliary name: main)
+asset main.js 858 KiB [compared for emit] (name: main)
+webpack 5.37.0 compiled successfully in 1347 ms
+```
+
+> `mp3-loader`的最终代码在这里：[Redd-Developer/webpack-custom-loader](https://github.com/Redd-Developer/webpack-custom-loader)
+
+## 测试你的 loader
+
+既然 loader 依赖于编译时上下文，我推荐在 webpack 编译时进行集成测试。测试用例的期望输出取决于 loader 的实现。
+
+对于`mp3-loader`我们有两点期望：、
+
+- 编译生成的资源中必须包含导入的 MP3 文件
+- 编译生成的代码必须返回一个音频播放 React 组件
+
+我们将以上两点期望反映到测试代码中：
+
+```js
+// test/mp3-loader.test.js
+const path = require("path");
+const webpack = require("webpack");
+const { createFsFromVolume, Volume } = require("memfs");
+// A custom wrapper to promisify webpack compilation.
+function compileAsync(compiler) {
+  return new Promise((resolve, reject) => {
+    compiler.run((error, stats) => {
+      if (error || stats.hasErrors()) {
+        const resolvedError = error || stats.toJson("errors-only")[0];
+        reject(resolvedError.message);
+      }
+      resolve(stats);
+    });
+  });
+}
+it('converts "*.mp3" import into an audio player', async () => {
+  // Configure a webpack compiler.
+  const compiler = webpack({
+    mode: "development",
+    entry: path.resolve(__dirname, "../src/index.js"),
+    output: {
+      filename: "index.js",
+    },
+    module: {
+      rules: [
+        {
+          test: /\.mp3$/,
+          use: ["babel-loader", require.resolve("../src/mp3-loader.js")],
+        },
+        {
+          test: /\.js$/,
+          use: ["babel-loader"],
+        },
+      ],
+    },
+  });
+  // Create an in-memory file system so that the build assets
+  // are not emitted to disk during test runs.
+  const memoryFs = createFsFromVolume(new Volume());
+  compiler.outputFileSystem = memoryFs;
+  // Compile the bundle.
+  await compileAsync(compiler);
+  // Expect the imported audio file to be emitted alongside the build.
+  expect(compiler.outputFileSystem.existsSync("dist/audio.mp3")).toEqual(true);
+  // Expect the compiled code to create an "audio" element in React.
+  const compiledCode = compiler.outputFileSystem.readFileSync(
+    "dist/index.js",
+    "utf8"
+  );
+  expect(compiledCode).toContain('.createElement(\\"audio\\"');
+});
+```
+
+## webpack loader 组成
+
+### loader 选项
+
+loader 能接收选项来改变自身的行为。
+
+```js
+// webpack.config.js
+module.exports = {
+  module: {
+    rules: [
+      {
+        test: /\.mp3$/,
+        use: [
+          {
+            loader: "mp3-loader",
+            options: {
+              maxSizeBytes: 1000000,
+            },
+          },
+        ],
+      },
+    ],
+  },
+};
+```
+
+在上面的 webpack 配置中，我们自定义了一个`maxSizeBytes`选项。`options`选项可以通过`this.getOptions()`获取到：
+
+```js
+// src/mp3-loader.js
+module.exports = function (source) {
+  const options = this.getOptions();
+  console.log(options.maxSizeBytes);
+  // ...parametrize your loader's behavior.
+};
+```
+
+### 验证选项
+
+验证选项是否合理是一个好的习惯，可以避免很多错误。
+`schema-utils`模块可以用来验证 loader 选项是否合理。
+
+```js
+// src/mp3-loader.js
+const { validate } = require("schema-utils");
+// Describe your loader's options in a JSON Schema.
+const schema = {
+  properties: {
+    maxSizeBytes: {
+      type: "number",
+    },
+  },
+};
+module.exports = function (source) {
+  const options = this.getOptions();
+  // Validate the options early in your loader.
+  validate(schema, options);
+  // ...the rest of your loader.
+};
+```
+
+> `schema`对象定义使用[JSON Schema](https://json-schema.org/)格式.
+
+### 日志
+
+我们来考虑下`maxSizeBytes`选项，当导入的音频文件超出了最大限制时抛出一条警告。
+
+```js
+// src/mp3-loader.js
+const fs = require("fs");
+module.exports = function (source) {
+  const options = this.getOptions();
+  const logger = this.getLogger();
+  const assetStats = fs.statSync(this.resourcePath);
+  if (assetStats.size > options.maxSizeBytes) {
+    logger.warn("Imported MP3 file is too large!");
+  }
+};
+```
+
+> 了解更多的 [webpack 日志接口](https://webpack.js.org/api/logging/)
+
+### 上下文属性
+
+| 属性              | 描述                                                                          |
+| ----------------- | ----------------------------------------------------------------------------- |
+| this.resourcePath | 导入文件的绝对路径                                                            |
+| this.rootContext  | 编译[上下文环境](https://webpack.js.org/configuration/entry-context/#context) |
+
+> 你可以打印出 `this` 来查看所有的属性
+
+### 上下文方法
+
+| 属性               | 描述                                                        |
+| ------------------ | ----------------------------------------------------------- |
+| this.emitFile()    | 在最终的目标目录中生成一个文件                              |
+| this.getLogger()   | 获取[webpack 日志实例](https://webpack.js.org/api/logging/) |
+| this.emitWarning() | 编译时生成一个警告                                          |
+| this.getOptions()  | 获取 loader 选项                                            |
+
+> 你可以打印出 `this` 来查看所有的方法
+
+## 参考文献
+
+关于 webpack 定制化的文档并不是完善。当我在学习写 webpack loader 的时候，我参考了之前使用过的一些 loader 的实现。下面是一些你可以参考的 loader 列表：
+
+- [Featured webpack loaders](https://webpack.js.org/loaders/)
+- [file-loader](https://github.com/webpack-contrib/file-loader/)
+- [css-loader](https://github.com/webpack-contrib/css-loader)
+
+# 本文译自[Writing A Custom Webpack Loader](https://redd.one/blog/writing-custom-webpack-loader)

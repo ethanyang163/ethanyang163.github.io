@@ -5,9 +5,7 @@ import Seo from "../components/seo";
 const AboutPage = () => {
   return (
     <Layout pageTitle="About Me">
-      <p>
-        Hi there! I'm the proud creator of this site, which I built with Gatsby.
-      </p>
+      <p>程序员， 迪士尼爱好者</p>
     </Layout>
   );
 };
