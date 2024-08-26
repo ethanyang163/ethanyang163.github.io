@@ -1,7 +1,13 @@
 /**
  * @type {import('gatsby').GatsbyConfig}
  */
-module.exports = {
+
+import { dirname } from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const config = {
   siteMetadata: {
     title: "Ethan Yang",
     siteUrl: `https://www.yourdomain.tld`,
@@ -20,3 +26,5 @@ module.exports = {
     "gatsby-transformer-sharp",
   ],
 };
+
+export default config;
