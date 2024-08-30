@@ -4,6 +4,10 @@
 
 import { dirname } from "path";
 import { fileURLToPath } from "url";
+import remarkGfm from "remark-gfm";
+import remarkExternalLinks from "remark-external-links";
+import rehypeSlug from "rehype-slug";
+import rehypeAutolinkHeadings from "rehype-autolink-headings";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -25,6 +29,22 @@ const config = {
     {
       resolve: `gatsby-plugin-mdx`,
       options: {
+        mdxOptions: {
+          remarkPlugins: [
+            // Add GitHub Flavored Markdown (GFM) support
+            remarkGfm,
+            // To pass options, use a 2-element array with the
+            // configuration in an object in the second element
+            [remarkExternalLinks, { target: false }],
+          ],
+          rehypePlugins: [
+            // Generate heading ids for rehype-autolink-headings
+            // rehypeSlug,
+            // To pass options, use a 2-element array with the
+            // configuration in an object in the second element
+            [rehypeAutolinkHeadings, { behavior: `wrap` }],
+          ],
+        },
         gatsbyRemarkPlugins: [
           {
             resolve: `gatsby-remark-images`,
