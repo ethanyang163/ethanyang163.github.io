@@ -122,7 +122,6 @@ const config = {
     },
     "gatsby-transformer-sharp",
   ],
-  pathPrefix: "/blog",
 };
 
 export default config;
