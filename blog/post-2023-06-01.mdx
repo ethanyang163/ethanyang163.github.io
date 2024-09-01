@@ -1,0 +1,49 @@
+---
+date: "2023-06-01"
+slug: "post-2023-06-01"
+title: "Javasript方法借用"
+---
+
+### 方法借用
+
+有一个简单的`hash`函数， 参数 args 是一个数组
+
+```js
+function hash(args) {
+  return args.join();
+}
+```
+
+如果要利用`arguments`对象我们可以怎么做？
+
+```js
+function hash() {
+  alert(arguments.join()); // Error: arguments.join is not a function
+}
+
+hash(1, 2);
+```
+
+`arguments`对象并不是真正的数组，所以会报错。`arguments`类数组对象可以从真数组上借用方法：
+
+```js
+function hash() {
+  return [].join.call(arguments); // 1,2
+}
+
+hash(1, 2);
+```
+
+### 一定记得从对象和函数原型上借用现成的方法
+
+```js
+let obj = {
+  0: "Hello",
+  1: "world!",
+  length: 2,
+};
+
+obj.join = Array.prototype.join;
+
+alert(obj.join(",")); // Hello,world!
+```
